@@ -52,3 +52,28 @@ export function updateEstado(pedidoId, novoEstado) {
     body: JSON.stringify({ novo_estado: novoEstado }),
   })
 }
+
+export function subscribePedidos({ onOpen, onError, onPedidosChanged } = {}) {
+  const eventSource = new EventSource(`${API_BASE_URL}/pedidos/stream`)
+
+  eventSource.onopen = () => {
+    onOpen?.()
+  }
+
+  eventSource.onerror = (event) => {
+    onError?.(event)
+  }
+
+  eventSource.addEventListener('pedidos_changed', (event) => {
+    try {
+      const payload = JSON.parse(event.data)
+      onPedidosChanged?.(payload)
+    } catch {
+      onPedidosChanged?.(null)
+    }
+  })
+
+  return () => {
+    eventSource.close()
+  }
+}

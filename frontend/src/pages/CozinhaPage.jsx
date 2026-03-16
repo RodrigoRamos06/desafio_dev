@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -12,7 +12,7 @@ import {
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { getPedidos, updateEstado } from '../api'
+import { getPedidos, subscribePedidos, updateEstado } from '../api'
 import { ORDER_STATES, ORDER_STATE_LABELS } from '../constants'
 import './CozinhaPage.css'
 
@@ -195,6 +195,7 @@ export default function CozinhaPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [liveStatus, setLiveStatus] = useState('reconnecting')
   const [updatingPedidoId, setUpdatingPedidoId] = useState(null)
   const [selectedPedido, setSelectedPedido] = useState(null)
   const [activeDragPedido, setActiveDragPedido] = useState(null)
@@ -208,7 +209,7 @@ export default function CozinhaPage() {
     }),
   )
 
-  async function carregarPedidos({ showLoading = false } = {}) {
+  const carregarPedidos = useCallback(async ({ showLoading = false } = {}) => {
     if (showLoading) setLoading(true)
     setRefreshing(true)
     setError('')
@@ -221,11 +222,34 @@ export default function CozinhaPage() {
       setLoading(false)
       setRefreshing(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     carregarPedidos({ showLoading: true })
-  }, [])
+  }, [carregarPedidos])
+
+  useEffect(() => {
+    let debounceTimerId = null
+    const unsubscribe = subscribePedidos({
+      onOpen: () => setLiveStatus('connected'),
+      onError: () => setLiveStatus('reconnecting'),
+      onPedidosChanged: () => {
+        if (debounceTimerId) {
+          clearTimeout(debounceTimerId)
+        }
+        debounceTimerId = setTimeout(() => {
+          carregarPedidos()
+        }, 300)
+      },
+    })
+
+    return () => {
+      if (debounceTimerId) {
+        clearTimeout(debounceTimerId)
+      }
+      unsubscribe()
+    }
+  }, [carregarPedidos])
 
   const pedidosPorColuna = useMemo(() => {
     const grouped = Object.fromEntries(ORDER_STATES.map((state) => [state, []]))
@@ -325,14 +349,21 @@ export default function CozinhaPage() {
       <div className="kitchen-view">
         <div className="kitchen-header">
           <h1 className="page-title">Dashboard da Cozinha</h1>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => carregarPedidos()}
-            disabled={refreshing}
-          >
-            {refreshing ? 'A atualizar...' : 'Atualizar'}
-          </button>
+          <div className="kitchen-header-actions">
+            <span
+              className={`live-indicator ${liveStatus === 'connected' ? 'connected' : 'reconnecting'}`}
+            >
+              {liveStatus === 'connected' ? 'Live' : 'Reconectar...'}
+            </span>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => carregarPedidos()}
+              disabled={refreshing}
+            >
+              {refreshing ? 'A atualizar...' : 'Atualizar'}
+            </button>
+          </div>
         </div>
 
         {loading ? <p className="feedback">A carregar pedidos...</p> : null}
