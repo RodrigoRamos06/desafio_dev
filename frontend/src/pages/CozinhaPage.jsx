@@ -1,7 +1,32 @@
 import { useEffect, useMemo, useState } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCorners,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { getPedidos, updateEstado } from '../api'
 import { ORDER_STATES, ORDER_STATE_LABELS } from '../constants'
 import './CozinhaPage.css'
+
+const COLUMN_ID_PREFIX = 'column-'
+
+function getColumnId(estado) {
+  return `${COLUMN_ID_PREFIX}${estado}`
+}
+
+function getEstadoFromColumnId(value) {
+  if (typeof value !== 'string') return null
+  if (!value.startsWith(COLUMN_ID_PREFIX)) return null
+  return value.slice(COLUMN_ID_PREFIX.length)
+}
 
 function formatarHora(timestamp) {
   if (!timestamp) return '--:--'
@@ -12,6 +37,134 @@ function formatarHora(timestamp) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function PedidoPreview({ pedido }) {
+  return (
+    <>
+      <div className="pedido-head">
+        <h3>Mesa {pedido.mesa}</h3>
+        <span>{formatarHora(pedido.data)}</span>
+      </div>
+
+      <ul>
+        {pedido.pratos.map((prato, itemIndex) => (
+          <li key={`${pedido.id}-${itemIndex}`}>
+            {prato.nome} x {prato.quantidade}
+          </li>
+        ))}
+      </ul>
+    </>
+  )
+}
+
+function DraggablePedidoCard({
+  pedido,
+  estado,
+  index,
+  isUpdating,
+  onOpen,
+  onMove,
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useDraggable({
+    id: `pedido-${pedido.id}`,
+    data: { type: 'pedido', pedidoId: pedido.id, estado },
+    disabled: isUpdating,
+  })
+
+  const style = {
+    ...(transform && !isDragging
+      ? {
+          transform: CSS.Transform.toString(transform),
+          transition,
+        }
+      : {}),
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`pedido-card ${isDragging ? 'dragging' : ''}`}
+      onClick={() => onOpen(pedido)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          onOpen(pedido)
+        }
+      }}
+      {...listeners}
+      {...attributes}
+    >
+      <PedidoPreview pedido={pedido} />
+
+      <div className="pedido-actions">
+        <button
+          type="button"
+          className="btn btn-small"
+          onClick={(event) => {
+            event.stopPropagation()
+            onMove(pedido.id, pedido.estado, -1)
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onTouchStart={(event) => event.stopPropagation()}
+          disabled={index === 0 || isUpdating}
+        >
+          Anterior
+        </button>
+        <button
+          type="button"
+          className="btn btn-small"
+          onClick={(event) => {
+            event.stopPropagation()
+            onMove(pedido.id, pedido.estado, 1)
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onTouchStart={(event) => event.stopPropagation()}
+          disabled={index === ORDER_STATES.length - 1 || isUpdating}
+        >
+          Proximo
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function DroppableColumn({ state, label, pedidos, index, updatingPedidoId, onOpen, onMove }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: getColumnId(state),
+    data: { type: 'column', estado: state },
+  })
+
+  return (
+    <article ref={setNodeRef} className={`kanban-column ${isOver ? 'drop-target' : ''}`}>
+      <header>
+        <h2>{label}</h2>
+      </header>
+
+      <div className="kanban-cards">
+        {pedidos.map((pedido) => (
+          <DraggablePedidoCard
+            key={pedido.id}
+            pedido={pedido}
+            estado={state}
+            index={index}
+            isUpdating={updatingPedidoId === pedido.id}
+            onOpen={onOpen}
+            onMove={onMove}
+          />
+        ))}
+      </div>
+    </article>
+  )
 }
 
 function PedidoModal({ pedido, onClose }) {
@@ -44,6 +197,16 @@ export default function CozinhaPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [updatingPedidoId, setUpdatingPedidoId] = useState(null)
   const [selectedPedido, setSelectedPedido] = useState(null)
+  const [activeDragPedido, setActiveDragPedido] = useState(null)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  )
 
   async function carregarPedidos({ showLoading = false } = {}) {
     if (showLoading) setLoading(true)
@@ -84,23 +247,77 @@ export default function CozinhaPage() {
     return grouped
   }, [pedidos])
 
-  async function moverPedido(pedidoId, estadoAtual, direction) {
-    const currentIndex = ORDER_STATES.indexOf(estadoAtual)
-    const nextIndex = currentIndex + direction
-
-    if (nextIndex < 0 || nextIndex >= ORDER_STATES.length) return
-
-    const novoEstado = ORDER_STATES[nextIndex]
-
+  async function moverPedidoParaEstado(pedidoId, estadoAtual, novoEstado) {
+    if (!estadoAtual || !novoEstado || estadoAtual === novoEstado) return
     setUpdatingPedidoId(pedidoId)
+    setError('')
+    setPedidos((current) => {
+      if (!current[pedidoId]) return current
+      return {
+        ...current,
+        [pedidoId]: {
+          ...current[pedidoId],
+          estado: novoEstado,
+        },
+      }
+    })
+
     try {
       await updateEstado(pedidoId, novoEstado)
-      await carregarPedidos()
     } catch (updateError) {
+      setPedidos((current) => {
+        if (!current[pedidoId]) return current
+        return {
+          ...current,
+          [pedidoId]: {
+            ...current[pedidoId],
+            estado: estadoAtual,
+          },
+        }
+      })
       setError(updateError.message)
     } finally {
       setUpdatingPedidoId(null)
     }
+  }
+
+  async function moverPedido(pedidoId, estadoAtual, direction) {
+    const currentIndex = ORDER_STATES.indexOf(estadoAtual)
+    const nextIndex = currentIndex + direction
+    if (nextIndex < 0 || nextIndex >= ORDER_STATES.length) return
+
+    const novoEstado = ORDER_STATES[nextIndex]
+    await moverPedidoParaEstado(pedidoId, estadoAtual, novoEstado)
+  }
+
+  function handleDragStart(event) {
+    const pedidoId = event.active.data.current?.pedidoId
+    if (!pedidoId || !pedidos[pedidoId]) return
+
+    setActiveDragPedido({
+      id: pedidoId,
+      ...pedidos[pedidoId],
+    })
+  }
+
+  function handleDragCancel() {
+    setActiveDragPedido(null)
+  }
+
+  async function handleDragEnd(event) {
+    setActiveDragPedido(null)
+
+    const { active, over } = event
+    if (!over) return
+
+    const pedidoId = active.data.current?.pedidoId
+    const estadoAtual = active.data.current?.estado
+    if (!pedidoId || !estadoAtual) return
+
+    const novoEstado = getEstadoFromColumnId(over.id)
+    if (!novoEstado || novoEstado === estadoAtual) return
+
+    await moverPedidoParaEstado(pedidoId, estadoAtual, novoEstado)
   }
 
   return (
@@ -121,72 +338,36 @@ export default function CozinhaPage() {
         {loading ? <p className="feedback">A carregar pedidos...</p> : null}
         {error ? <p className="feedback feedback-error">{error}</p> : null}
 
-        <div className="kanban-grid">
-          {ORDER_STATES.map((state, index) => (
-            <article key={state} className="kanban-column">
-              <header>
-                <h2>{ORDER_STATE_LABELS[state]}</h2>
-              </header>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={handleDragStart}
+          onDragCancel={handleDragCancel}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="kanban-grid">
+            {ORDER_STATES.map((state, index) => (
+              <DroppableColumn
+                key={state}
+                state={state}
+                label={ORDER_STATE_LABELS[state]}
+                pedidos={pedidosPorColuna[state]}
+                index={index}
+                updatingPedidoId={updatingPedidoId}
+                onOpen={setSelectedPedido}
+                onMove={moverPedido}
+              />
+            ))}
+          </div>
 
-              <div className="kanban-cards">
-                {pedidosPorColuna[state].map((pedido) => (
-                  <div
-                    key={pedido.id}
-                    className="pedido-card"
-                    onClick={() => setSelectedPedido(pedido)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        setSelectedPedido(pedido)
-                      }
-                    }}
-                  >
-                    <div className="pedido-head">
-                      <h3>Mesa {pedido.mesa}</h3>
-                      <span>{formatarHora(pedido.data)}</span>
-                    </div>
-
-                    <ul>
-                      {pedido.pratos.map((prato, itemIndex) => (
-                        <li key={`${pedido.id}-${itemIndex}`}>
-                          {prato.nome} x {prato.quantidade}
-                        </li>
-                      ))}
-                    </ul>
-
-                    <div className="pedido-actions">
-                      <button
-                        type="button"
-                        className="btn btn-small"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          moverPedido(pedido.id, pedido.estado, -1)
-                        }}
-                        disabled={index === 0 || updatingPedidoId === pedido.id}
-                      >
-                        Anterior
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-small"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          moverPedido(pedido.id, pedido.estado, 1)
-                        }}
-                        disabled={
-                          index === ORDER_STATES.length - 1 || updatingPedidoId === pedido.id
-                        }
-                      >
-                        Proximo
-                      </button>
-                    </div>
-                  </div>
-                ))}
+          <DragOverlay>
+            {activeDragPedido ? (
+              <div className="pedido-card pedido-card-overlay">
+                <PedidoPreview pedido={activeDragPedido} />
               </div>
-            </article>
-          ))}
-        </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       </div>
 
       <PedidoModal pedido={selectedPedido} onClose={() => setSelectedPedido(null)} />

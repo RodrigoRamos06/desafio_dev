@@ -93,6 +93,12 @@
   height: 100%;
 }
 
+.kanban-column.drop-target {
+  border-color: #e0a35e;
+  background: #1b2231;
+  box-shadow: inset 0 0 0 1px rgba(224, 163, 94, 0.4);
+}
+
 .kanban-column h2 {
   font-size: 1rem;
   margin: 4px 0 10px;
@@ -113,8 +119,15 @@
   border-radius: 10px;
   padding: 10px;
   background: #1d2230;
-  cursor: pointer;
-  touch-action: manipulation;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pedido-card.dragging {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .pedido-card h3 {
@@ -142,6 +155,21 @@
 .pedido-actions {
   display: flex;
   gap: 8px;
+}
+
+.pedido-actions .btn {
+  touch-action: manipulation;
+}
+
+.pedido-card-overlay {
+  width: min(290px, 80vw);
+  box-shadow: rgba(0, 0, 0, 0.45) 0 12px 28px;
+  border-color: #5f7093;
+  transform: rotate(1deg);
+}
+
+.pedido-card-overlay .pedido-actions {
+  display: none;
 }
 
 .modal-backdrop {
