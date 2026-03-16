@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getMenu, submitPedido } from '../api'
 import { CATEGORY_ORDER } from '../constants'
+import './ClientePage.css'
 
 const ALL_FILTER = 'Todos'
 
@@ -41,6 +42,7 @@ export default function ClientePage() {
   const [pedidoAtual, setPedidoAtual] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState({ message: '', tone: 'success' })
+  const [isCartOpen, setIsCartOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -77,6 +79,25 @@ export default function ClientePage() {
     return () => clearTimeout(timeoutId)
   }, [toast.message])
 
+  useEffect(() => {
+    if (!isCartOpen) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        setIsCartOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [isCartOpen])
+
   const categories = useMemo(() => buildCategories(menuData), [menuData])
 
   const visibleCategories = useMemo(() => {
@@ -94,6 +115,10 @@ export default function ClientePage() {
   )
 
   const hasPedido = pedidoEntries.length > 0
+  const totalItens = useMemo(
+    () => pedidoEntries.reduce((acc, linha) => acc + linha.quantidade, 0),
+    [pedidoEntries],
+  )
 
   function updateQuantity(pratoId, nextValue) {
     const parsed = Number(nextValue)
@@ -138,6 +163,7 @@ export default function ClientePage() {
         message: `Pedido #${pedidoId} enviado para a cozinha.`,
         tone: 'success',
       })
+      setIsCartOpen(false)
       setPedidoAtual({})
       setMesa('')
       setQuantities({})
@@ -148,74 +174,27 @@ export default function ClientePage() {
     }
   }
 
-  return (
-    <section className="view-grid">
-      <Toast message={toast.message} tone={toast.tone} />
-
-      <div className="menu-column">
-        <h1 className="page-title">O Escondidinho</h1>
-
-        <div className="filters">
-          <button
-            type="button"
-            className={`btn ${activeFilter === ALL_FILTER ? 'btn-active' : ''}`}
-            onClick={() => setActiveFilter(ALL_FILTER)}
-          >
-            Todos
-          </button>
-          {categories.map(({ category }) => (
+  function renderPedidoForm(inputId, showClose = false) {
+    return (
+      <>
+        <div className="order-panel-head">
+          <h2>O Teu Pedido</h2>
+          {showClose ? (
             <button
               type="button"
-              key={category}
-              className={`btn ${activeFilter === category ? 'btn-active' : ''}`}
-              onClick={() => setActiveFilter(category)}
+              className="order-modal-close"
+              onClick={() => setIsCartOpen(false)}
+              aria-label="Fechar pedido"
             >
-              {category}
+              ×
             </button>
-          ))}
+          ) : null}
         </div>
 
-        {loading ? <p className="feedback">A carregar menu...</p> : null}
-        {error ? <p className="feedback feedback-error">{error}</p> : null}
-
-        {!loading &&
-          !error &&
-          visibleCategories.map(({ category, pratos }) => (
-            <div key={category} className="category-block">
-              <h2>{category}</h2>
-              {pratos.length === 0 ? (
-                <p className="feedback">Sem pratos nesta categoria.</p>
-              ) : (
-                pratos.map((prato) => (
-                  <article key={prato.id} className="dish-card">
-                    <h3>{prato.nome}</h3>
-                    <p>{prato.descricao}</p>
-                    <p className="ingredients">{prato.ingredientes}</p>
-                    <div className="dish-actions">
-                      <input
-                        type="number"
-                        min="1"
-                        value={quantities[prato.id] ?? 1}
-                        onChange={(event) => updateQuantity(prato.id, event.target.value)}
-                      />
-                      <button type="button" className="btn" onClick={() => addPrato(prato)}>
-                        + Adicionar
-                      </button>
-                    </div>
-                  </article>
-                ))
-              )}
-            </div>
-          ))}
-      </div>
-
-      <aside className="order-panel">
-        <h2>O Teu Pedido</h2>
-
         <form className="mesa-field" onSubmit={onSubmit}>
-          <label htmlFor="mesa">Mesa</label>
+          <label htmlFor={inputId}>Mesa</label>
           <input
-            id="mesa"
+            id={inputId}
             type="number"
             min="1"
             placeholder="--"
@@ -240,8 +219,95 @@ export default function ClientePage() {
             {submitting ? 'A submeter...' : 'Confirmar Pedido'}
           </button>
         </form>
-      </aside>
+      </>
+    )
+  }
+
+  return (
+    <section className="cliente-page">
+      <Toast message={toast.message} tone={toast.tone} />
+
+      <div className="view-grid">
+        <div className="menu-column">
+          <h1 className="page-title">O Escondidinho</h1>
+
+          <div className="filters">
+            <button
+              type="button"
+              className={`btn ${activeFilter === ALL_FILTER ? 'btn-active' : ''}`}
+              onClick={() => setActiveFilter(ALL_FILTER)}
+            >
+              Todos
+            </button>
+            {categories.map(({ category }) => (
+              <button
+                type="button"
+                key={category}
+                className={`btn ${activeFilter === category ? 'btn-active' : ''}`}
+                onClick={() => setActiveFilter(category)}
+              >
+                {category}
+              </button>
+            ))}
+          </div>
+
+          {loading ? <p className="feedback">A carregar menu...</p> : null}
+          {error ? <p className="feedback feedback-error">{error}</p> : null}
+
+          {!loading &&
+            !error &&
+            visibleCategories.map(({ category, pratos }) => (
+              <div key={category} className="category-block">
+                <h2>{category}</h2>
+                {pratos.length === 0 ? (
+                  <p className="feedback">Sem pratos nesta categoria.</p>
+                ) : (
+                  pratos.map((prato) => (
+                    <article key={prato.id} className="dish-card">
+                      <h3>{prato.nome}</h3>
+                      <p>{prato.descricao}</p>
+                      <p className="ingredients">{prato.ingredientes}</p>
+                      <div className="dish-actions">
+                        <input
+                          type="number"
+                          min="1"
+                          value={quantities[prato.id] ?? 1}
+                          onChange={(event) => updateQuantity(prato.id, event.target.value)}
+                        />
+                        <button type="button" className="btn" onClick={() => addPrato(prato)}>
+                          + Adicionar
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            ))}
+        </div>
+
+        <aside className="order-panel order-panel-desktop">
+          {renderPedidoForm('mesa-desktop')}
+        </aside>
+      </div>
+
+      <button
+        type="button"
+        className="mobile-cart-btn"
+        onClick={() => setIsCartOpen(true)}
+        aria-label="Abrir pedido"
+      >
+        <span className="mobile-cart-icon">🛒</span>
+        <span>Pedido</span>
+        {hasPedido ? <span className="mobile-cart-count">{totalItens}</span> : null}
+      </button>
+
+      {isCartOpen ? (
+        <div className="order-modal-backdrop" onClick={() => setIsCartOpen(false)}>
+          <aside className="order-modal-panel" onClick={(event) => event.stopPropagation()}>
+            {renderPedidoForm('mesa-mobile', true)}
+          </aside>
+        </div>
+      ) : null}
     </section>
   )
 }
-

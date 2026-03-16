@@ -7,22 +7,8 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/cliente" replace />} />
-      <Route
-        path="/cliente"
-        element={
-          <div className="cliente-shell">
-            <ClientePage />
-          </div>
-        }
-      />
-      <Route
-        path="/cozinha"
-        element={
-          <div className="cozinha-shell">
-            <CozinhaPage />
-          </div>
-        }
-      />
+      <Route path="/cliente" element={<ClientePage />} />
+      <Route path="/cozinha" element={<CozinhaPage />} />
       <Route path="*" element={<Navigate to="/cliente" replace />} />
     </Routes>
   )
